@@ -130,14 +130,14 @@ class App(ctk.CTk):
         self._watch_btn = ctk.CTkButton(
             self._sidebar,
             text="▶  감시 시작",
-            font=ctk.CTkFont(size=13, weight="bold"),
+            font=ctk.CTkFont(size=12),
             fg_color=COLOR_ACCENT,
             hover_color="#3a7ae4",
-            height=40,
+            height=30,
             corner_radius=8,
             command=self._toggle_watch,
         )
-        self._watch_btn.grid(row=9, column=0, padx=12, pady=(4, 20), sticky="ew")
+        self._watch_btn.grid(row=9, column=0, padx=12, pady=(4, 16), sticky="ew")
 
     # ──────────────────────────────────────────
     # 페이지 전환
@@ -190,14 +190,24 @@ class App(ctk.CTk):
             ctk.CTkLabel(card, text=value, font=ctk.CTkFont(size=22, weight="bold"), text_color=color).pack(pady=(16, 2))
             ctk.CTkLabel(card, text=title, font=ctk.CTkFont(size=12), text_color=COLOR_TEXT_DIM).pack(pady=(0, 16))
 
-        # 프로젝트 목록 미리보기
-        ctk.CTkLabel(frame, text="등록된 프로젝트", font=ctk.CTkFont(size=14, weight="bold"), text_color=COLOR_TEXT).pack(anchor="w", padx=24, pady=(0, 8))
+        # 프로젝트 목록
+        header = ctk.CTkFrame(frame, fg_color="transparent")
+        header.pack(fill="x", padx=24, pady=(0, 8))
+        ctk.CTkLabel(header, text="등록된 프로젝트", font=ctk.CTkFont(size=14, weight="bold"), text_color=COLOR_TEXT).pack(side="left")
+        ctk.CTkButton(
+            header, text="+ 추가",
+            font=ctk.CTkFont(size=12), fg_color="#1e3a6e", hover_color=COLOR_ACCENT,
+            height=28, width=60, corner_radius=6,
+            command=lambda: self._show_page("projects"),
+        ).pack(side="right")
 
         if not projects:
             ctk.CTkLabel(frame, text="등록된 프로젝트가 없습니다.\n프로젝트 탭에서 추가해주세요.", text_color=COLOR_TEXT_DIM, font=ctk.CTkFont(size=13)).pack(pady=30)
         else:
+            scroll = ctk.CTkScrollableFrame(frame, fg_color="transparent")
+            scroll.pack(fill="both", expand=True, padx=24, pady=(0, 16))
             for p in projects:
-                self._project_card(frame, p, compact=True)
+                self._project_card(scroll, p, compact=False, removable=False)
 
     def _build_account_card(self, parent):
         """GitHub 계정 연동 상태 카드"""
@@ -347,12 +357,12 @@ class App(ctk.CTk):
                 command=lambda path=p["path"], repo=p["repo_name"]: self._manual_push(path, repo),
             ).grid(row=0, column=3, padx=4, pady=14)
 
-        # 제거 버튼
+        # 삭제 버튼
         if removable:
             ctk.CTkButton(
-                card, text="✕",
-                font=ctk.CTkFont(size=12), fg_color="transparent", hover_color=COLOR_DANGER,
-                text_color=COLOR_TEXT_DIM, height=30, width=36, corner_radius=6,
+                card, text="삭제",
+                font=ctk.CTkFont(size=12), fg_color="#3a1a1a", hover_color=COLOR_DANGER,
+                text_color="#ff6b6b", height=30, width=52, corner_radius=6,
                 command=lambda path=p["path"]: self._remove_project(path),
             ).grid(row=0, column=4, padx=(0, 12), pady=14)
 
@@ -472,7 +482,7 @@ class App(ctk.CTk):
         self._watch_thread.start()
         self._is_watching = True
 
-        self._watch_btn.configure(text="■  감시 중지", fg_color=COLOR_DANGER, hover_color="#c62828")
+        self._watch_btn.configure(text="■  감시 중지", fg_color=COLOR_DANGER, hover_color="#c62828", font=ctk.CTkFont(size=12), height=30)
         self._status_badge.configure(text="● 감시 중", text_color=COLOR_SUCCESS)
         self._append_log(f"감시 시작 — {len(projects)}개 프로젝트")
         if self._current_page == "dashboard":
@@ -482,7 +492,7 @@ class App(ctk.CTk):
         if self._watcher_service:
             self._watcher_service.stop()
         self._is_watching = False
-        self._watch_btn.configure(text="▶  감시 시작", fg_color=COLOR_ACCENT, hover_color="#3a7ae4")
+        self._watch_btn.configure(text="▶  감시 시작", fg_color=COLOR_ACCENT, hover_color="#3a7ae4", font=ctk.CTkFont(size=12), height=30)
         self._status_badge.configure(text="● 대기 중", text_color=COLOR_TEXT_DIM)
         self._append_log("감시 중지")
         if self._current_page == "dashboard":
