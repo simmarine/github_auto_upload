@@ -197,7 +197,13 @@ def upload_project(project_path: str, repo_name: str, commit_message: str = "", 
         _run(["git", "branch", "-M", "main"], cwd=project_dir)
 
     _run(["git", "add", "."], cwd=project_dir)
-    _run(["git", "commit", "-m", commit_message], cwd=project_dir)
+
+    # 변경사항 없어도 빈 커밋으로 초기화 (레포가 비어있으면 push 불가)
+    staged = _run(["git", "diff", "--cached", "--name-only"], cwd=project_dir, capture=True)
+    if staged.strip():
+        _run(["git", "commit", "-m", commit_message], cwd=project_dir)
+    else:
+        _run(["git", "commit", "--allow-empty", "-m", commit_message], cwd=project_dir)
 
     remotes = _run(["git", "remote"], cwd=project_dir, capture=True)
     if "origin" in remotes:
@@ -205,7 +211,12 @@ def upload_project(project_path: str, repo_name: str, commit_message: str = "", 
     else:
         _run(["git", "remote", "add", "origin", remote_url], cwd=project_dir)
 
-    _run(["git", "push", "-u", "origin", "main"], cwd=project_dir)
+    # 기존 히스토리가 있는 프로젝트면 강제 push (첫 등록이므로)
+    try:
+        _run(["git", "push", "-u", "origin", "main"], cwd=project_dir)
+    except Exception:
+        _run(["git", "push", "-u", "origin", "main", "--force"], cwd=project_dir)
+
     print(f"업로드 완료: {repo_url}")
     return repo_url
 
