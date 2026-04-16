@@ -19,10 +19,12 @@ from src.config import (
 from src.github_manager import upload_project, update_project
 from src.watcher import WatcherService
 
-# Windows 인코딩
+# Windows 인코딩 (windowed exe에서는 stdout/stderr가 None)
 if sys.platform == "win32":
-    sys.stdout.reconfigure(encoding="utf-8")
-    sys.stderr.reconfigure(encoding="utf-8")
+    if sys.stdout is not None:
+        sys.stdout.reconfigure(encoding="utf-8")
+    if sys.stderr is not None:
+        sys.stderr.reconfigure(encoding="utf-8")
 
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
