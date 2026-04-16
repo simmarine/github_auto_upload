@@ -69,6 +69,28 @@ def upload_project(project_path: str, repo_name: str, commit_message: str = ""):
     return repo_url
 
 
+def update_project(project_path: str, repo_name: str, commit_message: str = "", push: bool = True):
+    """이미 GitHub에 연결된 프로젝트 변경사항 커밋 및 push"""
+    project_dir = Path(project_path)
+
+    if not project_dir.exists():
+        raise Exception(f"폴더가 존재하지 않습니다: {project_path}")
+
+    # 변경사항 확인
+    status = _run(["git", "status", "--porcelain"], cwd=project_dir, capture=True)
+    if not status.strip():
+        return  # 변경사항 없으면 스킵
+
+    if not commit_message:
+        commit_message = f"update: {repo_name} 업데이트"
+
+    _run(["git", "add", "."], cwd=project_dir)
+    _run(["git", "commit", "-m", commit_message], cwd=project_dir)
+
+    if push:
+        _run(["git", "push"], cwd=project_dir)
+
+
 def _run(cmd: list, cwd: Path = None, capture: bool = False) -> str:
     result = subprocess.run(
         cmd,
