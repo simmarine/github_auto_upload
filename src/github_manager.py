@@ -37,7 +37,52 @@ def create_repo(repo_name: str, description: str = "", private: bool = False) ->
         raise Exception(f"레포지토리 생성 실패: {response.status_code} {response.text}")
 
 
-def upload_project(project_path: str, repo_name: str, commit_message: str = ""):
+DEFAULT_GITIGNORE = """\
+# 의존성
+node_modules/
+venv/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# 빌드 결과물
+dist/
+build/
+*.egg-info/
+.next/
+out/
+
+# 환경변수
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.suo
+*.user
+
+# OS
+.DS_Store
+Thumbs.db
+
+# 로그
+*.log
+npm-debug.log*
+"""
+
+
+def _ensure_gitignore(project_dir: Path) -> None:
+    """프로젝트에 .gitignore가 없으면 기본값으로 생성"""
+    gitignore_path = project_dir / ".gitignore"
+    if not gitignore_path.exists():
+        gitignore_path.write_text(DEFAULT_GITIGNORE, encoding="utf-8")
+        print(f".gitignore 자동 생성: {gitignore_path}")
+
+
+def upload_project(project_path: str, repo_name: str, commit_message: str = "", private: bool = False):
     """프로젝트 폴더를 GitHub 레포지토리에 업로드"""
     project_dir = Path(project_path)
 
@@ -47,7 +92,10 @@ def upload_project(project_path: str, repo_name: str, commit_message: str = ""):
     if not commit_message:
         commit_message = f"upload: {repo_name} 프로젝트 업로드"
 
-    repo_url = create_repo(repo_name)
+    # .gitignore 없으면 자동 생성 (node_modules 등 제외)
+    _ensure_gitignore(project_dir)
+
+    repo_url = create_repo(repo_name, private=private)
     remote_url = f"https://{GITHUB_TOKEN}@github.com/{GITHUB_USERNAME}/{repo_name}.git"
 
     git_dir = project_dir / ".git"
