@@ -142,11 +142,13 @@ def upload_project(project_path: str, repo_name: str, commit_message: str = "", 
     else:
         _run(["git", "remote", "add", "origin", remote_url], cwd=project_dir)
 
-    # push (충돌 시 강제 push)
+    # push — credential.helper 비워서 URL 토큰 직접 사용
     try:
-        _run(["git", "push", "-u", "origin", "main"], cwd=project_dir)
+        _run(["git", "-c", "credential.helper=", "push", "-u", "origin", "main"],
+             cwd=project_dir)
     except Exception:
-        _run(["git", "push", "-u", "origin", "main", "--force"], cwd=project_dir)
+        _run(["git", "-c", "credential.helper=", "push", "-u", "origin", "main", "--force"],
+             cwd=project_dir)
 
     return repo_url
 
@@ -167,14 +169,14 @@ def update_project(project_path: str, repo_name: str, commit_message: str = "", 
     _run(["git", "add", "."], cwd=project_dir)
     _run(["git", "commit", "-m", commit_message], cwd=project_dir)
     if push:
-        _run(["git", "push"], cwd=project_dir)
+        _run(["git", "-c", "credential.helper=", "push"], cwd=project_dir)
 
 
 def create_release_tag(project_path: str, repo_name: str, version: str, tag_type: str, description: str) -> str:
     """git 태그 생성 + GitHub Release 발행"""
     project_dir = Path(project_path)
     _run(["git", "tag", "-a", version, "-m", f"{tag_type}: {description}"], cwd=project_dir)
-    _run(["git", "push", "origin", version], cwd=project_dir)
+    _run(["git", "-c", "credential.helper=", "push", "origin", version], cwd=project_dir)
 
     r = requests.post(
         f"https://api.github.com/repos/{_username()}/{repo_name}/releases",
@@ -220,10 +222,22 @@ def get_latest_tag(project_path: str) -> str:
         return ""
 
 
-def _run(cmd: list, cwd: Path = None, capture: bool = False) -> str:
+def _run(cmd: list, cwd: Path = None, capture: bool = False, env: dict = None) -> str:
+    import os
+    run_env = os.environ.copy()
+    # Windows credential manager 우회 + 프롬프트 방지
+    run_env["GIT_TERMINAL_PROMPT"] = "0"
+    if env:
+        run_env.update(env)
+
     result = subprocess.run(
-        cmd, cwd=cwd, capture_output=capture, text=True,
+        cmd, cwd=cwd,
+        stdout=subprocess.PIPE if capture else subprocess.DEVNULL,
+        stderr=subprocess.PIPE,   # 항상 캡처 (오류 메시지 확인용)
+        text=True,
+        env=run_env,
     )
     if result.returncode != 0 and not capture:
-        raise Exception(f"git 오류: {' '.join(cmd)}\n{result.stderr}")
+        err = result.stderr.strip() or "알 수 없는 오류"
+        raise Exception(f"git 오류: {' '.join(cmd)}\n{err}")
     return result.stdout if capture else ""
