@@ -97,6 +97,17 @@ def create_repo(repo_name: str, description: str = "", private: bool = False) ->
         raise Exception(f"레포지토리 생성 실패: {r.status_code} {r.text}")
 
 
+def set_repo_visibility(repo_name: str, private: bool) -> None:
+    """레포지토리 공개/비공개 전환"""
+    r = requests.patch(
+        f"https://api.github.com/repos/{_username()}/{repo_name}",
+        headers=_headers(),
+        json={"private": private},
+    )
+    if r.status_code not in (200, 201):
+        raise Exception(f"visibility 변경 실패: {r.status_code} {r.text}")
+
+
 def upload_project(project_path: str, repo_name: str, commit_message: str = "", private: bool = False) -> str:
     """프로젝트 폴더를 GitHub 레포지토리에 업로드"""
     project_dir = Path(project_path)

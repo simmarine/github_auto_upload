@@ -16,7 +16,7 @@ from src.config import (
     get_github_username,
     save_env,
 )
-from src.github_manager import upload_project, update_project, fetch_my_repos, create_release_tag, get_latest_tag, delete_github_repo
+from src.github_manager import upload_project, update_project, fetch_my_repos, create_release_tag, get_latest_tag, delete_github_repo, set_repo_visibility
 from src.watcher import WatcherService
 
 # Windows 인코딩 (windowed exe에서는 stdout/stderr가 None)
@@ -275,29 +275,41 @@ class App(ctk.CTk):
         name_frame.grid(row=0, column=1, sticky="ew")
         ctk.CTkLabel(name_frame, text=repo["name"], font=ctk.CTkFont(size=13, weight="bold"),
                      text_color=COLOR_ACCENT, anchor="w").pack(side="left")
-        if repo.get("private"):
-            ctk.CTkLabel(name_frame, text=" 🔒", font=ctk.CTkFont(size=11), text_color=COLOR_TEXT_DIM).pack(side="left")
         ctk.CTkLabel(name_frame, text=f"  {lang}  ·  {repo.get('updated_at','')[:10]}",
                      font=ctk.CTkFont(size=11), text_color=COLOR_TEXT_DIM).pack(side="left")
+
+        # 공개/비공개 토글 버튼
+        is_private = repo.get("private", False)
+        vis_btn = ctk.CTkButton(
+            card,
+            text="🔒 Private" if is_private else "🌐 Public",
+            font=ctk.CTkFont(size=11),
+            fg_color="#3a2a4a" if is_private else "#1a3a20",
+            hover_color="#5a3a6a" if is_private else "#2a5a30",
+            text_color="#cc88ff" if is_private else "#88cc88",
+            height=26, width=80, corner_radius=6,
+        )
+        vis_btn.grid(row=0, column=2, padx=4, pady=12)
+        vis_btn.configure(command=lambda n=repo["name"], p=is_private, b=vis_btn: self._toggle_visibility(n, p, b))
 
         # 감시 뱃지 or 등록 버튼
         if is_watched:
             ctk.CTkLabel(card, text="감시 중", font=ctk.CTkFont(size=11),
                          text_color=COLOR_SUCCESS, fg_color="#1a3a20", corner_radius=6,
-                         padx=6).grid(row=0, column=2, padx=6, pady=12)
+                         padx=6).grid(row=0, column=3, padx=4, pady=12)
             ctk.CTkButton(
                 card, text="↑ Push",
                 font=ctk.CTkFont(size=11), fg_color="#1e3a6e", hover_color=COLOR_CARD_HOVER,
                 height=26, width=56, corner_radius=6,
                 command=lambda p=watch_info: self._manual_push_with_version(p["path"], p["repo_name"]),
-            ).grid(row=0, column=3, padx=4, pady=12)
+            ).grid(row=0, column=4, padx=4, pady=12)
         else:
             ctk.CTkButton(
                 card, text="+ 등록",
                 font=ctk.CTkFont(size=11), fg_color="#1e3a6e", hover_color=COLOR_ACCENT,
                 height=26, width=56, corner_radius=6,
                 command=lambda r=repo["name"]: self._add_project_dialog(preset_repo=r),
-            ).grid(row=0, column=2, padx=6, pady=12)
+            ).grid(row=0, column=3, padx=4, pady=12)
 
         # 삭제 버튼
         ctk.CTkButton(
@@ -305,7 +317,7 @@ class App(ctk.CTk):
             font=ctk.CTkFont(size=11), fg_color="#3a1a1a", hover_color=COLOR_DANGER,
             text_color="#ff6b6b", height=26, width=46, corner_radius=6,
             command=lambda n=repo["name"], p=watch_info: self._delete_repo(n, p),
-        ).grid(row=0, column=4, padx=(0, 12), pady=12)
+        ).grid(row=0, column=5, padx=(0, 12), pady=12)
 
     def _build_account_card(self, parent):
         """GitHub 계정 연동 상태 카드"""
@@ -487,8 +499,6 @@ class App(ctk.CTk):
         name_frame.grid(row=0, column=1, sticky="ew", pady=(12, 0))
         ctk.CTkLabel(name_frame, text=repo["name"], font=ctk.CTkFont(size=13, weight="bold"),
                      text_color=COLOR_ACCENT, anchor="w").pack(side="left")
-        if repo.get("private"):
-            ctk.CTkLabel(name_frame, text=" 🔒", font=ctk.CTkFont(size=11), text_color=COLOR_TEXT_DIM).pack(side="left")
 
         desc = repo.get("description") or ""
         if desc:
@@ -501,36 +511,50 @@ class App(ctk.CTk):
         ctk.CTkLabel(card, text=meta, font=ctk.CTkFont(size=11), text_color=COLOR_TEXT_DIM,
                      anchor="w").grid(row=2 if desc else 1, column=1, sticky="w", pady=(0, 12))
 
+        # 공개/비공개 토글 버튼
+        is_private = repo.get("private", False)
+        vis_btn = ctk.CTkButton(
+            card,
+            text="🔒 Private" if is_private else "🌐 Public",
+            font=ctk.CTkFont(size=11),
+            fg_color="#3a2a4a" if is_private else "#1a3a20",
+            hover_color="#5a3a6a" if is_private else "#2a5a30",
+            text_color="#cc88ff" if is_private else "#88cc88",
+            height=28, width=90, corner_radius=6,
+        )
+        vis_btn.grid(row=0, column=2, padx=6, pady=12, sticky="n")
+        vis_btn.configure(command=lambda n=repo["name"], p=is_private, b=vis_btn: self._toggle_visibility(n, p, b))
+
         # 감시 뱃지
         if is_watched:
             ctk.CTkLabel(card, text="감시 중", font=ctk.CTkFont(size=11),
                          text_color=COLOR_SUCCESS, fg_color="#1a3a20", corner_radius=6,
-                         padx=6).grid(row=0, column=2, padx=8, pady=12, sticky="n")
+                         padx=6).grid(row=0, column=3, padx=4, pady=12, sticky="n")
             ctk.CTkButton(
                 card, text="↑ Push",
                 font=ctk.CTkFont(size=12), fg_color="#1e3a6e", hover_color=COLOR_CARD_HOVER,
                 height=28, width=64, corner_radius=6,
                 command=lambda p=watch_info: self._manual_push_with_version(p["path"], p["repo_name"]),
-            ).grid(row=0, column=3, padx=4, pady=12, sticky="n")
+            ).grid(row=0, column=4, padx=4, pady=12, sticky="n")
             ctk.CTkButton(
                 card, text="삭제",
                 font=ctk.CTkFont(size=12), fg_color="#3a1a1a", hover_color=COLOR_DANGER,
                 text_color="#ff6b6b", height=28, width=52, corner_radius=6,
                 command=lambda n=repo["name"], w=watch_info: self._delete_repo(n, w),
-            ).grid(row=0, column=4, padx=(0, 12), pady=12, sticky="n")
+            ).grid(row=0, column=5, padx=(0, 12), pady=12, sticky="n")
         else:
             ctk.CTkButton(
                 card, text="+ 등록",
                 font=ctk.CTkFont(size=12), fg_color="#1e3a6e", hover_color=COLOR_ACCENT,
                 height=28, width=64, corner_radius=6,
                 command=lambda r=repo["name"]: self._add_project_dialog(preset_repo=r),
-            ).grid(row=0, column=2, padx=(8, 12), pady=12, sticky="n")
+            ).grid(row=0, column=3, padx=4, pady=12, sticky="n")
             ctk.CTkButton(
                 card, text="삭제",
                 font=ctk.CTkFont(size=12), fg_color="#3a1a1a", hover_color=COLOR_DANGER,
                 text_color="#ff6b6b", height=28, width=52, corner_radius=6,
                 command=lambda n=repo["name"]: self._delete_repo(n, None),
-            ).grid(row=0, column=3, padx=(0, 12), pady=12, sticky="n")
+            ).grid(row=0, column=4, padx=(0, 12), pady=12, sticky="n")
 
     def _project_card(self, parent, p: dict, compact: bool, removable: bool = False):
         card = ctk.CTkFrame(parent, fg_color=COLOR_CARD, corner_radius=12)
@@ -707,42 +731,110 @@ class App(ctk.CTk):
 
         dialog = ctk.CTkToplevel(self)
         dialog.title("프로젝트 등록")
-        dialog.geometry("420x260")
+        dialog.geometry("420x320")
         dialog.configure(fg_color=COLOR_BG)
         dialog.grab_set()
 
         ctk.CTkLabel(dialog, text="프로젝트 등록", font=ctk.CTkFont(size=16, weight="bold"), text_color=COLOR_TEXT).pack(pady=(24, 4))
-        ctk.CTkLabel(dialog, text=path, font=ctk.CTkFont(size=11), text_color=COLOR_TEXT_DIM).pack(pady=(0, 16))
+        ctk.CTkLabel(dialog, text=path, font=ctk.CTkFont(size=11), text_color=COLOR_TEXT_DIM).pack(pady=(0, 12))
 
+        # 레포 이름
         ctk.CTkLabel(dialog, text="GitHub 레포 이름", font=ctk.CTkFont(size=13), text_color=COLOR_TEXT_DIM).pack(anchor="w", padx=24)
         repo_entry = ctk.CTkEntry(dialog, placeholder_text=Path(path).name,
                                   font=ctk.CTkFont(size=13), fg_color="#0d1117",
-                                  border_color="#2a3a5e", height=38, corner_radius=8)
+                                  border_color="#2a3a5e", height=36, corner_radius=8)
         repo_entry.insert(0, preset_repo or Path(path).name)
         repo_entry.pack(fill="x", padx=24, pady=(4, 12))
 
+        # Public / Private 토글 버튼
+        ctk.CTkLabel(dialog, text="공개 설정", font=ctk.CTkFont(size=13), text_color=COLOR_TEXT_DIM).pack(anchor="w", padx=24)
+        visibility_var = ctk.StringVar(value="public")
+
+        vis_frame = ctk.CTkFrame(dialog, fg_color="transparent")
+        vis_frame.pack(fill="x", padx=24, pady=(4, 12))
+
+        def _set_visibility(val: str):
+            visibility_var.set(val)
+            if val == "public":
+                pub_btn.configure(fg_color=COLOR_ACCENT, text_color="white")
+                priv_btn.configure(fg_color="#1e2d50", text_color=COLOR_TEXT_DIM)
+            else:
+                pub_btn.configure(fg_color="#1e2d50", text_color=COLOR_TEXT_DIM)
+                priv_btn.configure(fg_color="#6a3a6e", text_color="white")
+
+        pub_btn = ctk.CTkButton(vis_frame, text="🌐  Public",
+                                font=ctk.CTkFont(size=13), fg_color=COLOR_ACCENT,
+                                text_color="white", height=36, corner_radius=8,
+                                command=lambda: _set_visibility("public"))
+        pub_btn.pack(side="left", expand=True, fill="x", padx=(0, 4))
+
+        priv_btn = ctk.CTkButton(vis_frame, text="🔒  Private",
+                                 font=ctk.CTkFont(size=13), fg_color="#1e2d50",
+                                 text_color=COLOR_TEXT_DIM, height=36, corner_radius=8,
+                                 command=lambda: _set_visibility("private"))
+        priv_btn.pack(side="left", expand=True, fill="x", padx=(4, 0))
+
+        # 자동 push 체크박스
         auto_var = ctk.BooleanVar(value=True)
         ctk.CTkCheckBox(dialog, text="변경 시 자동 push", variable=auto_var,
-                        font=ctk.CTkFont(size=13), text_color=COLOR_TEXT).pack(anchor="w", padx=24, pady=(0, 16))
+                        font=ctk.CTkFont(size=13), text_color=COLOR_TEXT).pack(anchor="w", padx=24, pady=(0, 12))
 
         def confirm():
             repo = repo_entry.get().strip() or Path(path).name
+            is_private = visibility_var.get() == "private"
             dialog.destroy()
-            self._append_log(f"등록 중: {repo} ...")
-            threading.Thread(target=self._do_init_project, args=(path, repo, auto_var.get()), daemon=True).start()
+            self._append_log(f"등록 중: {repo} ({'Private' if is_private else 'Public'}) ...")
+            threading.Thread(
+                target=self._do_init_project,
+                args=(path, repo, auto_var.get(), is_private),
+                daemon=True,
+            ).start()
 
         ctk.CTkButton(dialog, text="등록", font=ctk.CTkFont(size=13, weight="bold"),
-                      fg_color=COLOR_ACCENT, hover_color="#3a7ae4", height=38, corner_radius=8,
+                      fg_color=COLOR_ACCENT, hover_color="#3a7ae4", height=36, corner_radius=8,
                       command=confirm).pack(fill="x", padx=24, pady=0)
 
-    def _do_init_project(self, path: str, repo: str, auto_push: bool):
+    def _do_init_project(self, path: str, repo: str, auto_push: bool, is_private: bool = False):
         try:
-            url = upload_project(path, repo)
+            url = upload_project(path, repo, private=is_private)
             add_watch_project(path, repo, auto_push)
             self._log_queue.put(f"등록 완료: {repo} → {url}")
             self.after(0, lambda: self._show_page(self._current_page))
         except Exception as e:
             self._log_queue.put(f"등록 실패: {e}")
+
+    def _toggle_visibility(self, repo_name: str, current_private: bool, btn: ctk.CTkButton):
+        """공개/비공개 전환 — API 호출 후 버튼 UI 즉시 업데이트"""
+        new_private = not current_private
+        btn.configure(state="disabled", text="변경 중...")
+        self._append_log(f"{'Private' if new_private else 'Public'}으로 변경 중: {repo_name} ...")
+
+        def _do():
+            try:
+                set_repo_visibility(repo_name, new_private)
+                # 캐시 업데이트
+                for r in self._cached_repos:
+                    if r["name"] == repo_name:
+                        r["private"] = new_private
+                        break
+                label = "🔒 Private" if new_private else "🌐 Public"
+                fg = "#3a2a4a" if new_private else "#1a3a20"
+                hover = "#5a3a6a" if new_private else "#2a5a30"
+                tc = "#cc88ff" if new_private else "#88cc88"
+                self.after(0, lambda: btn.configure(
+                    state="normal", text=label, fg_color=fg, hover_color=hover, text_color=tc,
+                    command=lambda n=repo_name, p=new_private, b=btn: self._toggle_visibility(n, p, b),
+                ))
+                self._log_queue.put(f"공개 설정 변경 완료: {repo_name} → {'Private' if new_private else 'Public'}")
+            except Exception as e:
+                label = "🔒 Private" if current_private else "🌐 Public"
+                fg = "#3a2a4a" if current_private else "#1a3a20"
+                hover = "#5a3a6a" if current_private else "#2a5a30"
+                tc = "#cc88ff" if current_private else "#88cc88"
+                self.after(0, lambda: btn.configure(state="normal", text=label, fg_color=fg, hover_color=hover, text_color=tc))
+                self._log_queue.put(f"공개 설정 변경 실패: {e}")
+
+        threading.Thread(target=_do, daemon=True).start()
 
     def _delete_repo(self, repo_name: str, watch_info: dict | None):
         """GitHub 레포 삭제 + 로컬 감시 목록에서도 제거"""
