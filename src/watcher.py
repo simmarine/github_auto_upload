@@ -28,7 +28,7 @@ def _should_ignore(path: str) -> bool:
 class ProjectEventHandler(FileSystemEventHandler):
     """파일 변경 감지 후 debounce 적용, GitHub push 실행"""
 
-    def __init__(self, project_path: str, repo_name: str, auto_push: bool, debounce_sec: int = 5):
+    def __init__(self, project_path: str, repo_name: str, auto_push: bool, debounce_sec: int = 5, log_callback=None):
         self.project_path = project_path
         self.repo_name = repo_name
         self.auto_push = auto_push
@@ -36,6 +36,7 @@ class ProjectEventHandler(FileSystemEventHandler):
         self._timer: threading.Timer | None = None
         self._changed_files: set[str] = set()
         self._lock = threading.Lock()
+        self._log = log_callback or print
 
     def on_any_event(self, event):
         if event.is_directory:
@@ -58,15 +59,14 @@ class ProjectEventHandler(FileSystemEventHandler):
             self._changed_files.clear()
 
         commit_message = _generate_commit_message(changed)
-        timestamp = datetime.now().strftime("%H:%M:%S")
-        print(f"\n[{timestamp}] 변경 감지 ({len(changed)}개 파일) → {self.repo_name}")
-        print(f"  커밋: {commit_message}")
+        self._log(f"변경 감지 {len(changed)}개 파일 → {self.repo_name}")
+        self._log(f"커밋: {commit_message}")
 
         try:
             update_project(self.project_path, self.repo_name, commit_message, push=self.auto_push)
-            print(f"  {'push 완료' if self.auto_push else '커밋 완료 (push 대기)'}")
+            self._log(f"{'push 완료' if self.auto_push else '커밋 완료 (push 대기)'}: {self.repo_name}")
         except Exception as e:
-            print(f"  오류: {e}")
+            self._log(f"오류: {e}")
 
 
 def _generate_commit_message(changed_files: list[str]) -> str:
@@ -86,32 +86,36 @@ def _generate_commit_message(changed_files: list[str]) -> str:
 class WatcherService:
     """여러 프로젝트를 동시에 감시하는 서비스"""
 
-    def __init__(self):
+    def __init__(self, log_callback=None):
         self._observers: list[Observer] = []
+        self._log = log_callback or print
+        self._running = False
 
     def add_project(self, project_path: str, repo_name: str, auto_push: bool = True, debounce_sec: int = 5):
-        handler = ProjectEventHandler(project_path, repo_name, auto_push, debounce_sec)
+        handler = ProjectEventHandler(project_path, repo_name, auto_push, debounce_sec, log_callback=self._log)
         observer = Observer()
         observer.schedule(handler, project_path, recursive=True)
         self._observers.append(observer)
-        print(f"감시 시작: {project_path} → {repo_name} (auto_push={auto_push})")
+        self._log(f"감시 등록: {repo_name}")
 
     def start(self):
         if not self._observers:
-            print("감시할 프로젝트가 없습니다. 먼저 'init' 명령으로 프로젝트를 등록하세요.")
+            self._log("감시할 프로젝트가 없습니다.")
             return
+        self._running = True
         for obs in self._observers:
             obs.start()
-        print(f"\n총 {len(self._observers)}개 프로젝트 감시 중... (종료: Ctrl+C)\n")
+        self._log(f"총 {len(self._observers)}개 프로젝트 감시 시작")
         try:
-            while True:
+            while self._running:
                 time.sleep(1)
         except KeyboardInterrupt:
             self.stop()
 
     def stop(self):
+        self._running = False
         for obs in self._observers:
             obs.stop()
         for obs in self._observers:
             obs.join()
-        print("\n감시 종료.")
+        self._log("감시 종료")
