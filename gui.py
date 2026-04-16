@@ -52,6 +52,8 @@ class App(ctk.CTk):
         self._is_watching = False
         self._log_queue: queue.Queue = queue.Queue()
         self._current_page = "dashboard"
+        self._last_push_ts: str = ""
+        self._last_verified_username: str = ""
 
         self._build_layout()
         self._show_page("dashboard")
@@ -166,6 +168,9 @@ class App(ctk.CTk):
         frame = self._make_page_frame("대시보드")
         projects = load_watch_projects()
 
+        # 계정 연동 카드
+        self._build_account_card(frame)
+
         # 요약 카드 3개
         summary_frame = ctk.CTkFrame(frame, fg_color="transparent")
         summary_frame.pack(fill="x", padx=24, pady=(0, 20))
@@ -174,12 +179,12 @@ class App(ctk.CTk):
         cards = [
             ("등록 프로젝트", str(len(projects)), COLOR_ACCENT),
             ("감시 상태", "실행 중" if self._is_watching else "대기 중", COLOR_SUCCESS if self._is_watching else COLOR_TEXT_DIM),
-            ("연결", "GitHub", COLOR_SUCCESS),
+            ("마지막 push", self._last_push_time(), COLOR_TEXT),
         ]
         for col, (title, value, color) in enumerate(cards):
             card = ctk.CTkFrame(summary_frame, fg_color=COLOR_CARD, corner_radius=12)
             card.grid(row=0, column=col, padx=6, pady=4, sticky="ew")
-            ctk.CTkLabel(card, text=value, font=ctk.CTkFont(size=26, weight="bold"), text_color=color).pack(pady=(16, 2))
+            ctk.CTkLabel(card, text=value, font=ctk.CTkFont(size=22, weight="bold"), text_color=color).pack(pady=(16, 2))
             ctk.CTkLabel(card, text=title, font=ctk.CTkFont(size=12), text_color=COLOR_TEXT_DIM).pack(pady=(0, 16))
 
         # 프로젝트 목록 미리보기
@@ -190,6 +195,101 @@ class App(ctk.CTk):
         else:
             for p in projects:
                 self._project_card(frame, p, compact=True)
+
+    def _build_account_card(self, parent):
+        """GitHub 계정 연동 상태 카드"""
+        card = ctk.CTkFrame(parent, fg_color=COLOR_CARD, corner_radius=12)
+        card.pack(fill="x", padx=24, pady=(0, 16))
+
+        # 아바타 원형 (이니셜)
+        try:
+            username = get_github_username()
+            initial = username[0].upper()
+        except Exception:
+            username = "미설정"
+            initial = "?"
+
+        avatar = ctk.CTkLabel(
+            card, text=initial,
+            font=ctk.CTkFont(size=20, weight="bold"),
+            text_color="white",
+            fg_color=COLOR_ACCENT,
+            width=48, height=48,
+            corner_radius=24,
+        )
+        avatar.grid(row=0, column=0, rowspan=2, padx=(20, 12), pady=16)
+
+        # 인사말
+        ctk.CTkLabel(
+            card,
+            text=f"{username} 님, 안녕하세요!",
+            font=ctk.CTkFont(size=15, weight="bold"),
+            text_color=COLOR_TEXT,
+            anchor="w",
+        ).grid(row=0, column=1, sticky="sw", pady=(16, 2))
+
+        # 연동 상태 (비동기 검증)
+        self._account_status_label = ctk.CTkLabel(
+            card,
+            text="● 연결 확인 중...",
+            font=ctk.CTkFont(size=12),
+            text_color=COLOR_TEXT_DIM,
+            anchor="w",
+        )
+        self._account_status_label.grid(row=1, column=1, sticky="nw", pady=(0, 16))
+
+        # GitHub 프로필 링크 버튼
+        ctk.CTkLabel(
+            card,
+            text=f"github.com/{username}",
+            font=ctk.CTkFont(size=11),
+            text_color=COLOR_TEXT_DIM,
+            anchor="e",
+        ).grid(row=0, column=2, rowspan=2, padx=(0, 20), sticky="e")
+
+        card.grid_columnconfigure(1, weight=1)
+
+        # 백그라운드에서 토큰 유효성 검증
+        threading.Thread(target=self._verify_github_account, daemon=True).start()
+
+    def _verify_github_account(self):
+        """GitHub API로 토큰 유효성 실제 검증"""
+        import requests as req
+        try:
+            token = get_github_token()
+            r = req.get(
+                "https://api.github.com/user",
+                headers={"Authorization": f"token {token}", "Accept": "application/vnd.github.v3+json"},
+                timeout=5,
+            )
+            if r.status_code == 200:
+                data = r.json()
+                login = data.get("login", "")
+                repos = data.get("public_repos", 0)
+                msg = f"● 연동됨  |  공개 레포 {repos}개"
+                color = COLOR_SUCCESS
+                self._last_verified_username = login
+            elif r.status_code == 401:
+                msg = "● 토큰 인증 실패 — 설정에서 토큰을 확인하세요"
+                color = COLOR_DANGER
+            else:
+                msg = f"● 연결 오류 ({r.status_code})"
+                color = COLOR_WARNING
+        except Exception as e:
+            msg = "● GitHub 연결 불가"
+            color = COLOR_DANGER
+
+        # UI는 메인 스레드에서만 업데이트
+        self.after(0, lambda: self._update_account_status(msg, color))
+
+    def _update_account_status(self, msg: str, color: str):
+        if hasattr(self, "_account_status_label") and self._account_status_label.winfo_exists():
+            self._account_status_label.configure(text=msg, text_color=color)
+
+    def _last_push_time(self) -> str:
+        if not hasattr(self, "_last_push_ts") or not self._last_push_ts:
+            return "없음"
+        return self._last_push_ts
 
     # ──────────────────────────────────────────
     # 프로젝트 페이지
@@ -296,6 +396,8 @@ class App(ctk.CTk):
             while True:
                 msg = self._log_queue.get_nowait()
                 self._append_log(msg)
+                if "push 완료" in msg:
+                    self._last_push_ts = datetime.now().strftime("%H:%M")
         except queue.Empty:
             pass
         self.after(500, self._refresh_log_loop)
