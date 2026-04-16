@@ -14,6 +14,7 @@ from src.config import (
     remove_watch_project,
     get_github_token,
     get_github_username,
+    save_env,
 )
 from src.github_manager import upload_project, update_project
 from src.watcher import WatcherService
@@ -440,10 +441,8 @@ class App(ctk.CTk):
         ).grid(row=len(fields), column=0, columnspan=2, padx=20, pady=(8, 20), sticky="ew")
 
     def _save_settings(self):
-        env_path = Path(__file__).parent / ".env"
-        from dotenv import set_key
         for key, entry in self._setting_entries.items():
-            set_key(str(env_path), key, entry.get())
+            save_env(key, entry.get())
         self._append_log("설정 저장 완료")
         messagebox.showinfo("저장 완료", "설정이 저장되었습니다.")
 
