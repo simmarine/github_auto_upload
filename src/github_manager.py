@@ -73,6 +73,29 @@ def create_release_tag(project_path: str, repo_name: str, version: str, tag_type
     raise Exception(f"Release 생성 실패: {r.status_code} {r.text}")
 
 
+def delete_github_repo(repo_name: str) -> None:
+    """GitHub 레포지토리 삭제"""
+    import src.config as cfg
+    token = cfg.get_github_token()
+    username = cfg.get_github_username()
+    headers = {
+        "Authorization": f"token {token}",
+        "Accept": "application/vnd.github.v3+json",
+    }
+    r = requests.delete(
+        f"https://api.github.com/repos/{username}/{repo_name}",
+        headers=headers,
+    )
+    if r.status_code == 204:
+        return
+    elif r.status_code == 403:
+        raise Exception("권한 없음 — 토큰에 delete_repo 권한이 필요합니다.")
+    elif r.status_code == 404:
+        raise Exception(f"레포지토리를 찾을 수 없습니다: {repo_name}")
+    else:
+        raise Exception(f"삭제 실패: {r.status_code}")
+
+
 def get_latest_tag(project_path: str) -> str:
     """마지막 git 태그 반환 (없으면 빈 문자열)"""
     try:

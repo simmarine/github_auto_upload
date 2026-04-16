@@ -16,7 +16,7 @@ from src.config import (
     get_github_username,
     save_env,
 )
-from src.github_manager import upload_project, update_project, fetch_my_repos, create_release_tag, get_latest_tag
+from src.github_manager import upload_project, update_project, fetch_my_repos, create_release_tag, get_latest_tag, delete_github_repo
 from src.watcher import WatcherService
 
 # Windows 인코딩 (windowed exe에서는 stdout/stderr가 None)
@@ -70,6 +70,7 @@ class App(ctk.CTk):
         self._current_page = "dashboard"
         self._last_push_ts: str = ""
         self._last_verified_username: str = ""
+        self._cached_repos: list[dict] = []   # GitHub 레포 캐시
 
         self._build_layout()
         self._show_page("dashboard")
@@ -182,18 +183,18 @@ class App(ctk.CTk):
 
     def _page_dashboard(self):
         frame = self._make_page_frame("대시보드")
-        projects = load_watch_projects()
 
         # 계정 연동 카드
         self._build_account_card(frame)
 
         # 요약 카드 3개
+        watched = {p["repo_name"]: p for p in load_watch_projects()}
         summary_frame = ctk.CTkFrame(frame, fg_color="transparent")
-        summary_frame.pack(fill="x", padx=24, pady=(0, 20))
+        summary_frame.pack(fill="x", padx=24, pady=(0, 16))
         summary_frame.grid_columnconfigure((0, 1, 2), weight=1)
 
         cards = [
-            ("등록 프로젝트", str(len(projects)), COLOR_ACCENT),
+            ("GitHub 레포", str(len(self._cached_repos)) if self._cached_repos else "…", COLOR_ACCENT),
             ("감시 상태", "실행 중" if self._is_watching else "대기 중", COLOR_SUCCESS if self._is_watching else COLOR_TEXT_DIM),
             ("마지막 push", self._last_push_time(), COLOR_TEXT),
         ]
@@ -203,24 +204,108 @@ class App(ctk.CTk):
             ctk.CTkLabel(card, text=value, font=ctk.CTkFont(size=22, weight="bold"), text_color=color).pack(pady=(16, 2))
             ctk.CTkLabel(card, text=title, font=ctk.CTkFont(size=12), text_color=COLOR_TEXT_DIM).pack(pady=(0, 16))
 
-        # 프로젝트 목록
+        # 레포 목록 헤더
         header = ctk.CTkFrame(frame, fg_color="transparent")
         header.pack(fill="x", padx=24, pady=(0, 8))
-        ctk.CTkLabel(header, text="등록된 프로젝트", font=ctk.CTkFont(size=14, weight="bold"), text_color=COLOR_TEXT).pack(side="left")
+        ctk.CTkLabel(header, text="내 GitHub 레포지토리", font=ctk.CTkFont(size=14, weight="bold"), text_color=COLOR_TEXT).pack(side="left")
         ctk.CTkButton(
-            header, text="+ 추가",
+            header, text="↻ 새로고침",
             font=ctk.CTkFont(size=12), fg_color="#1e3a6e", hover_color=COLOR_ACCENT,
-            height=28, width=60, corner_radius=6,
-            command=lambda: self._show_page("projects"),
+            height=28, width=80, corner_radius=6,
+            command=self._refresh_dashboard,
         ).pack(side="right")
 
-        if not projects:
-            ctk.CTkLabel(frame, text="등록된 프로젝트가 없습니다.\n프로젝트 탭에서 추가해주세요.", text_color=COLOR_TEXT_DIM, font=ctk.CTkFont(size=13)).pack(pady=30)
+        # 스크롤 목록
+        self._dash_scroll = ctk.CTkScrollableFrame(frame, fg_color="transparent")
+        self._dash_scroll.pack(fill="both", expand=True, padx=24, pady=(0, 16))
+
+        self._dash_status = ctk.CTkLabel(
+            self._dash_scroll, text="레포 목록 불러오는 중...",
+            font=ctk.CTkFont(size=12), text_color=COLOR_TEXT_DIM,
+        )
+        self._dash_status.pack(pady=20)
+
+        if self._cached_repos:
+            self._render_dashboard_repos(self._cached_repos, watched)
         else:
-            scroll = ctk.CTkScrollableFrame(frame, fg_color="transparent")
-            scroll.pack(fill="both", expand=True, padx=24, pady=(0, 16))
-            for p in projects:
-                self._project_card(scroll, p, compact=False, removable=False)
+            threading.Thread(target=self._fetch_and_render_dashboard, daemon=True).start()
+
+    def _fetch_and_render_dashboard(self):
+        try:
+            repos = fetch_my_repos()
+            self._cached_repos = repos
+            watched = {p["repo_name"]: p for p in load_watch_projects()}
+            self.after(0, lambda: self._render_dashboard_repos(repos, watched))
+        except Exception as e:
+            self.after(0, lambda: self._dash_status.configure(
+                text=f"불러오기 실패: {e}", text_color=COLOR_DANGER))
+
+    def _refresh_dashboard(self):
+        self._cached_repos = []
+        self._show_page("dashboard")
+
+    def _render_dashboard_repos(self, repos: list, watched: dict):
+        if not hasattr(self, "_dash_scroll") or not self._dash_scroll.winfo_exists():
+            return
+        for w in self._dash_scroll.winfo_children():
+            w.destroy()
+        if not repos:
+            ctk.CTkLabel(self._dash_scroll, text="레포지토리가 없습니다.", text_color=COLOR_TEXT_DIM).pack(pady=20)
+            return
+        for repo in repos:
+            is_watched = repo["name"] in watched
+            watch_info = watched.get(repo["name"])
+            self._dash_repo_row(self._dash_scroll, repo, is_watched, watch_info)
+
+    def _dash_repo_row(self, parent, repo: dict, is_watched: bool, watch_info: dict | None):
+        card = ctk.CTkFrame(parent, fg_color=COLOR_CARD, corner_radius=10)
+        card.pack(fill="x", pady=3)
+        card.grid_columnconfigure(1, weight=1)
+
+        # 언어 점
+        lang = repo.get("language") or "—"
+        lang_colors = {"Python": "#3572A5", "JavaScript": "#f1e05a", "TypeScript": "#2b7489",
+                       "Java": "#b07219", "Go": "#00ADD8", "Rust": "#dea584"}
+        ctk.CTkLabel(card, text="●", font=ctk.CTkFont(size=10),
+                     text_color=lang_colors.get(lang, COLOR_TEXT_DIM), width=20).grid(
+            row=0, column=0, padx=(14, 4), pady=12)
+
+        # 레포 이름
+        name_frame = ctk.CTkFrame(card, fg_color="transparent")
+        name_frame.grid(row=0, column=1, sticky="ew")
+        ctk.CTkLabel(name_frame, text=repo["name"], font=ctk.CTkFont(size=13, weight="bold"),
+                     text_color=COLOR_ACCENT, anchor="w").pack(side="left")
+        if repo.get("private"):
+            ctk.CTkLabel(name_frame, text=" 🔒", font=ctk.CTkFont(size=11), text_color=COLOR_TEXT_DIM).pack(side="left")
+        ctk.CTkLabel(name_frame, text=f"  {lang}  ·  {repo.get('updated_at','')[:10]}",
+                     font=ctk.CTkFont(size=11), text_color=COLOR_TEXT_DIM).pack(side="left")
+
+        # 감시 뱃지 or 등록 버튼
+        if is_watched:
+            ctk.CTkLabel(card, text="감시 중", font=ctk.CTkFont(size=11),
+                         text_color=COLOR_SUCCESS, fg_color="#1a3a20", corner_radius=6,
+                         padx=6).grid(row=0, column=2, padx=6, pady=12)
+            ctk.CTkButton(
+                card, text="↑ Push",
+                font=ctk.CTkFont(size=11), fg_color="#1e3a6e", hover_color=COLOR_CARD_HOVER,
+                height=26, width=56, corner_radius=6,
+                command=lambda p=watch_info: self._manual_push_with_version(p["path"], p["repo_name"]),
+            ).grid(row=0, column=3, padx=4, pady=12)
+        else:
+            ctk.CTkButton(
+                card, text="+ 등록",
+                font=ctk.CTkFont(size=11), fg_color="#1e3a6e", hover_color=COLOR_ACCENT,
+                height=26, width=56, corner_radius=6,
+                command=lambda r=repo["name"]: self._add_project_dialog(preset_repo=r),
+            ).grid(row=0, column=2, padx=6, pady=12)
+
+        # 삭제 버튼
+        ctk.CTkButton(
+            card, text="삭제",
+            font=ctk.CTkFont(size=11), fg_color="#3a1a1a", hover_color=COLOR_DANGER,
+            text_color="#ff6b6b", height=26, width=46, corner_radius=6,
+            command=lambda n=repo["name"], p=watch_info: self._delete_repo(n, p),
+        ).grid(row=0, column=4, padx=(0, 12), pady=12)
 
     def _build_account_card(self, parent):
         """GitHub 계정 연동 상태 카드"""
@@ -431,7 +516,7 @@ class App(ctk.CTk):
                 card, text="삭제",
                 font=ctk.CTkFont(size=12), fg_color="#3a1a1a", hover_color=COLOR_DANGER,
                 text_color="#ff6b6b", height=28, width=52, corner_radius=6,
-                command=lambda path=watch_info["path"]: self._remove_project(path),
+                command=lambda n=repo["name"], w=watch_info: self._delete_repo(n, w),
             ).grid(row=0, column=4, padx=(0, 12), pady=12, sticky="n")
         else:
             ctk.CTkButton(
@@ -440,6 +525,12 @@ class App(ctk.CTk):
                 height=28, width=64, corner_radius=6,
                 command=lambda r=repo["name"]: self._add_project_dialog(preset_repo=r),
             ).grid(row=0, column=2, padx=(8, 12), pady=12, sticky="n")
+            ctk.CTkButton(
+                card, text="삭제",
+                font=ctk.CTkFont(size=12), fg_color="#3a1a1a", hover_color=COLOR_DANGER,
+                text_color="#ff6b6b", height=28, width=52, corner_radius=6,
+                command=lambda n=repo["name"]: self._delete_repo(n, None),
+            ).grid(row=0, column=3, padx=(0, 12), pady=12, sticky="n")
 
     def _project_card(self, parent, p: dict, compact: bool, removable: bool = False):
         card = ctk.CTkFrame(parent, fg_color=COLOR_CARD, corner_radius=12)
@@ -653,11 +744,38 @@ class App(ctk.CTk):
         except Exception as e:
             self._log_queue.put(f"등록 실패: {e}")
 
+    def _delete_repo(self, repo_name: str, watch_info: dict | None):
+        """GitHub 레포 삭제 + 로컬 감시 목록에서도 제거"""
+        answer = messagebox.askyesno(
+            "레포지토리 삭제",
+            f"'{repo_name}' 레포지토리를 GitHub에서 완전히 삭제할까요?\n\n"
+            "⚠️  이 작업은 되돌릴 수 없습니다.",
+        )
+        if not answer:
+            return
+        self._append_log(f"삭제 중: {repo_name} ...")
+        threading.Thread(
+            target=self._do_delete_repo,
+            args=(repo_name, watch_info),
+            daemon=True,
+        ).start()
+
+    def _do_delete_repo(self, repo_name: str, watch_info: dict | None):
+        try:
+            delete_github_repo(repo_name)
+            if watch_info:
+                remove_watch_project(watch_info["path"])
+            self._cached_repos = [r for r in self._cached_repos if r["name"] != repo_name]
+            self._log_queue.put(f"삭제 완료: {repo_name}")
+            self.after(0, lambda: self._show_page(self._current_page))
+        except Exception as e:
+            self._log_queue.put(f"삭제 실패: {e}")
+
     def _remove_project(self, path: str):
-        if messagebox.askyesno("확인", "감시 목록에서 제거할까요?\n(GitHub 레포는 삭제되지 않습니다)"):
+        if messagebox.askyesno("확인", "감시 목록에서만 제거할까요?\n(GitHub 레포는 삭제되지 않습니다)"):
             remove_watch_project(path)
             self._show_page("projects")
-            self._append_log(f"프로젝트 제거: {path}")
+            self._append_log(f"감시 목록 제거: {path}")
 
     def _manual_push(self, path: str, repo: str):
         self._manual_push_with_version(path, repo)
