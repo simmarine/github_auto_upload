@@ -15,6 +15,76 @@ HEADERS = {
 }
 
 
+def fetch_my_repos() -> list[dict]:
+    """내 GitHub 레포지토리 목록 조회"""
+    import src.config as cfg
+    token = cfg.get_github_token()
+    headers = {
+        "Authorization": f"token {token}",
+        "Accept": "application/vnd.github.v3+json",
+    }
+    repos = []
+    page = 1
+    while True:
+        r = requests.get(
+            f"https://api.github.com/user/repos?sort=updated&per_page=50&page={page}",
+            headers=headers,
+        )
+        if r.status_code != 200 or not r.json():
+            break
+        repos.extend(r.json())
+        if len(r.json()) < 50:
+            break
+        page += 1
+    return repos
+
+
+def create_release_tag(project_path: str, repo_name: str, version: str, tag_type: str, description: str) -> str:
+    """git 태그 생성 + GitHub Release 발행"""
+    import src.config as cfg
+    token = cfg.get_github_token()
+    username = cfg.get_github_username()
+    project_dir = Path(project_path)
+    headers = {
+        "Authorization": f"token {token}",
+        "Accept": "application/vnd.github.v3+json",
+    }
+
+    # 로컬 태그 생성
+    tag_message = f"{tag_type}: {description}"
+    _run(["git", "tag", "-a", version, "-m", tag_message], cwd=project_dir)
+    _run(["git", "push", "origin", version], cwd=project_dir)
+
+    # GitHub Release 생성
+    body = f"## {tag_type}\n\n{description}"
+    r = requests.post(
+        f"https://api.github.com/repos/{username}/{repo_name}/releases",
+        headers=headers,
+        json={
+            "tag_name": version,
+            "name": f"{version} — {tag_type}",
+            "body": body,
+            "draft": False,
+            "prerelease": False,
+        },
+    )
+    if r.status_code == 201:
+        return r.json().get("html_url", "")
+    raise Exception(f"Release 생성 실패: {r.status_code} {r.text}")
+
+
+def get_latest_tag(project_path: str) -> str:
+    """마지막 git 태그 반환 (없으면 빈 문자열)"""
+    try:
+        result = subprocess.run(
+            ["git", "describe", "--tags", "--abbrev=0"],
+            cwd=project_path, capture_output=True, text=True,
+        )
+        return result.stdout.strip() if result.returncode == 0 else ""
+    except Exception:
+        return ""
+
+
 def create_repo(repo_name: str, description: str = "", private: bool = False) -> str:
     """GitHub 레포지토리 생성 후 URL 반환"""
     url = "https://api.github.com/user/repos"

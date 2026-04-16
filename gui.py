@@ -16,7 +16,7 @@ from src.config import (
     get_github_username,
     save_env,
 )
-from src.github_manager import upload_project, update_project
+from src.github_manager import upload_project, update_project, fetch_my_repos, create_release_tag, get_latest_tag
 from src.watcher import WatcherService
 
 # Windows 인코딩 (windowed exe에서는 stdout/stderr가 None)
@@ -25,6 +25,19 @@ if sys.platform == "win32":
         sys.stdout.reconfigure(encoding="utf-8")
     if sys.stderr is not None:
         sys.stderr.reconfigure(encoding="utf-8")
+
+def _next_version(latest: str) -> str:
+    """마지막 태그에서 patch 버전 1 증가 (없으면 v1.0.0)"""
+    if not latest:
+        return "v1.0.0"
+    try:
+        v = latest.lstrip("v")
+        parts = v.split(".")
+        parts[-1] = str(int(parts[-1]) + 1)
+        return "v" + ".".join(parts)
+    except Exception:
+        return "v1.0.0"
+
 
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
@@ -311,24 +324,122 @@ class App(ctk.CTk):
     def _page_projects(self):
         frame = self._make_page_frame("프로젝트 관리")
 
-        # 추가 버튼
+        # 상단 버튼 영역
         btn_frame = ctk.CTkFrame(frame, fg_color="transparent")
         btn_frame.pack(fill="x", padx=24, pady=(0, 16))
         ctk.CTkButton(
-            btn_frame, text="+ 프로젝트 추가",
+            btn_frame, text="+ 로컬 폴더 등록",
             font=ctk.CTkFont(size=13), fg_color=COLOR_ACCENT, hover_color="#3a7ae4",
-            height=38, corner_radius=8, command=self._add_project_dialog,
+            height=36, corner_radius=8, command=self._add_project_dialog,
         ).pack(side="left")
+        self._repo_refresh_btn = ctk.CTkButton(
+            btn_frame, text="↻ 새로고침",
+            font=ctk.CTkFont(size=12), fg_color="#1e3a6e", hover_color="#2a4a8e",
+            height=36, corner_radius=8, command=self._reload_repos,
+        )
+        self._repo_refresh_btn.pack(side="left", padx=(8, 0))
 
-        # 프로젝트 목록
-        projects = load_watch_projects()
-        if not projects:
-            ctk.CTkLabel(frame, text="등록된 프로젝트가 없습니다.", text_color=COLOR_TEXT_DIM, font=ctk.CTkFont(size=13)).pack(pady=40)
+        # 로딩 레이블
+        self._repo_status_label = ctk.CTkLabel(
+            frame, text="GitHub 레포지토리 불러오는 중...",
+            font=ctk.CTkFont(size=12), text_color=COLOR_TEXT_DIM,
+        )
+        self._repo_status_label.pack(anchor="w", padx=24, pady=(0, 8))
+
+        # 스크롤 영역
+        self._repo_scroll = ctk.CTkScrollableFrame(frame, fg_color="transparent")
+        self._repo_scroll.pack(fill="both", expand=True, padx=24, pady=(0, 16))
+
+        # 비동기로 레포 목록 로드
+        threading.Thread(target=self._load_github_repos, daemon=True).start()
+
+    def _load_github_repos(self):
+        try:
+            repos = fetch_my_repos()
+            watched = {p["repo_name"]: p for p in load_watch_projects()}
+            self.after(0, lambda: self._render_repo_list(repos, watched))
+        except Exception as e:
+            self.after(0, lambda: self._repo_status_label.configure(
+                text=f"레포 불러오기 실패: {e}", text_color=COLOR_DANGER))
+
+    def _reload_repos(self):
+        for w in self._repo_scroll.winfo_children():
+            w.destroy()
+        self._repo_status_label.configure(text="GitHub 레포지토리 불러오는 중...", text_color=COLOR_TEXT_DIM)
+        threading.Thread(target=self._load_github_repos, daemon=True).start()
+
+    def _render_repo_list(self, repos: list, watched: dict):
+        if not hasattr(self, "_repo_status_label") or not self._repo_status_label.winfo_exists():
+            return
+        self._repo_status_label.configure(
+            text=f"총 {len(repos)}개 레포지토리  |  감시 중 {len(watched)}개",
+            text_color=COLOR_TEXT_DIM,
+        )
+        for w in self._repo_scroll.winfo_children():
+            w.destroy()
+
+        for repo in repos:
+            name = repo["name"]
+            is_watched = name in watched
+            watch_info = watched.get(name)
+            self._repo_card(self._repo_scroll, repo, is_watched, watch_info)
+
+    def _repo_card(self, parent, repo: dict, is_watched: bool, watch_info: dict | None):
+        card = ctk.CTkFrame(parent, fg_color=COLOR_CARD, corner_radius=10)
+        card.pack(fill="x", pady=4)
+        card.grid_columnconfigure(1, weight=1)
+
+        # 언어 색상 점
+        lang = repo.get("language") or "—"
+        lang_colors = {"Python": "#3572A5", "JavaScript": "#f1e05a", "TypeScript": "#2b7489",
+                       "Java": "#b07219", "Go": "#00ADD8", "Rust": "#dea584"}
+        dot_color = lang_colors.get(lang, COLOR_TEXT_DIM)
+        ctk.CTkLabel(card, text="●", font=ctk.CTkFont(size=10), text_color=dot_color, width=20).grid(
+            row=0, column=0, padx=(14, 4), pady=(14, 0), sticky="n")
+
+        # 레포 이름 + 설명
+        name_frame = ctk.CTkFrame(card, fg_color="transparent")
+        name_frame.grid(row=0, column=1, sticky="ew", pady=(12, 0))
+        ctk.CTkLabel(name_frame, text=repo["name"], font=ctk.CTkFont(size=13, weight="bold"),
+                     text_color=COLOR_ACCENT, anchor="w").pack(side="left")
+        if repo.get("private"):
+            ctk.CTkLabel(name_frame, text=" 🔒", font=ctk.CTkFont(size=11), text_color=COLOR_TEXT_DIM).pack(side="left")
+
+        desc = repo.get("description") or ""
+        if desc:
+            ctk.CTkLabel(card, text=desc, font=ctk.CTkFont(size=11), text_color=COLOR_TEXT_DIM,
+                         anchor="w").grid(row=1, column=1, sticky="ew", pady=(2, 10))
+
+        # 메타 정보 (언어, 업데이트)
+        updated = repo.get("updated_at", "")[:10]
+        meta = f"{lang}  ·  {updated}"
+        ctk.CTkLabel(card, text=meta, font=ctk.CTkFont(size=11), text_color=COLOR_TEXT_DIM,
+                     anchor="w").grid(row=2 if desc else 1, column=1, sticky="w", pady=(0, 12))
+
+        # 감시 뱃지
+        if is_watched:
+            ctk.CTkLabel(card, text="감시 중", font=ctk.CTkFont(size=11),
+                         text_color=COLOR_SUCCESS, fg_color="#1a3a20", corner_radius=6,
+                         padx=6).grid(row=0, column=2, padx=8, pady=12, sticky="n")
+            ctk.CTkButton(
+                card, text="↑ Push",
+                font=ctk.CTkFont(size=12), fg_color="#1e3a6e", hover_color=COLOR_CARD_HOVER,
+                height=28, width=64, corner_radius=6,
+                command=lambda p=watch_info: self._manual_push_with_version(p["path"], p["repo_name"]),
+            ).grid(row=0, column=3, padx=4, pady=12, sticky="n")
+            ctk.CTkButton(
+                card, text="삭제",
+                font=ctk.CTkFont(size=12), fg_color="#3a1a1a", hover_color=COLOR_DANGER,
+                text_color="#ff6b6b", height=28, width=52, corner_radius=6,
+                command=lambda path=watch_info["path"]: self._remove_project(path),
+            ).grid(row=0, column=4, padx=(0, 12), pady=12, sticky="n")
         else:
-            scroll = ctk.CTkScrollableFrame(frame, fg_color="transparent")
-            scroll.pack(fill="both", expand=True, padx=24, pady=0)
-            for p in projects:
-                self._project_card(scroll, p, compact=False, removable=True)
+            ctk.CTkButton(
+                card, text="+ 등록",
+                font=ctk.CTkFont(size=12), fg_color="#1e3a6e", hover_color=COLOR_ACCENT,
+                height=28, width=64, corner_radius=6,
+                command=lambda r=repo["name"]: self._add_project_dialog(preset_repo=r),
+            ).grid(row=0, column=2, padx=(8, 12), pady=12, sticky="n")
 
     def _project_card(self, parent, p: dict, compact: bool, removable: bool = False):
         card = ctk.CTkFrame(parent, fg_color=COLOR_CARD, corner_radius=12)
@@ -498,7 +609,7 @@ class App(ctk.CTk):
         if self._current_page == "dashboard":
             self._show_page("dashboard")
 
-    def _add_project_dialog(self):
+    def _add_project_dialog(self, preset_repo: str = ""):
         path = filedialog.askdirectory(title="프로젝트 폴더 선택")
         if not path:
             return
@@ -516,6 +627,7 @@ class App(ctk.CTk):
         repo_entry = ctk.CTkEntry(dialog, placeholder_text=Path(path).name,
                                   font=ctk.CTkFont(size=13), fg_color="#0d1117",
                                   border_color="#2a3a5e", height=38, corner_radius=8)
+        repo_entry.insert(0, preset_repo or Path(path).name)
         repo_entry.pack(fill="x", padx=24, pady=(4, 12))
 
         auto_var = ctk.BooleanVar(value=True)
@@ -548,8 +660,77 @@ class App(ctk.CTk):
             self._append_log(f"프로젝트 제거: {path}")
 
     def _manual_push(self, path: str, repo: str):
-        self._append_log(f"수동 push 중: {repo} ...")
-        threading.Thread(target=self._do_manual_push, args=(path, repo), daemon=True).start()
+        self._manual_push_with_version(path, repo)
+
+    def _manual_push_with_version(self, path: str, repo: str):
+        """버전 태그 다이얼로그 → push"""
+        dialog = ctk.CTkToplevel(self)
+        dialog.title("업데이트 푸시")
+        dialog.geometry("460x400")
+        dialog.configure(fg_color=COLOR_BG)
+        dialog.grab_set()
+
+        ctk.CTkLabel(dialog, text=f"업데이트: {repo}",
+                     font=ctk.CTkFont(size=16, weight="bold"), text_color=COLOR_TEXT).pack(pady=(24, 4))
+
+        # 버전 입력
+        latest = get_latest_tag(path)
+        next_ver = _next_version(latest)
+        ctk.CTkLabel(dialog, text="버전 (마지막: " + (latest or "없음") + ")",
+                     font=ctk.CTkFont(size=12), text_color=COLOR_TEXT_DIM).pack(anchor="w", padx=24, pady=(12, 2))
+        ver_entry = ctk.CTkEntry(dialog, placeholder_text=next_ver,
+                                 font=ctk.CTkFont(size=13), fg_color="#0d1117",
+                                 border_color="#2a3a5e", height=36, corner_radius=8)
+        ver_entry.insert(0, next_ver)
+        ver_entry.pack(fill="x", padx=24, pady=(0, 12))
+
+        # 변경 유형 선택
+        ctk.CTkLabel(dialog, text="변경 유형",
+                     font=ctk.CTkFont(size=12), text_color=COLOR_TEXT_DIM).pack(anchor="w", padx=24, pady=(0, 6))
+        tag_types = ["🐛 버그 수정", "✨ 기능 추가", "🔧 개선", "📝 문서 업데이트", "🔄 기타"]
+        type_var = ctk.StringVar(value=tag_types[0])
+        type_menu = ctk.CTkOptionMenu(dialog, values=tag_types, variable=type_var,
+                                      font=ctk.CTkFont(size=13), fg_color="#0d1117",
+                                      button_color="#1e3a6e", button_hover_color=COLOR_ACCENT,
+                                      height=36, corner_radius=8)
+        type_menu.pack(fill="x", padx=24, pady=(0, 12))
+
+        # 변경 내용 설명
+        ctk.CTkLabel(dialog, text="변경 내용",
+                     font=ctk.CTkFont(size=12), text_color=COLOR_TEXT_DIM).pack(anchor="w", padx=24, pady=(0, 6))
+        desc_box = ctk.CTkTextbox(dialog, font=ctk.CTkFont(size=13), fg_color="#0d1117",
+                                  height=80, corner_radius=8)
+        desc_box.pack(fill="x", padx=24, pady=(0, 16))
+
+        def do_push():
+            ver = ver_entry.get().strip() or next_ver
+            tag_type = type_var.get()
+            desc = desc_box.get("1.0", "end").strip()
+            if not desc:
+                messagebox.showwarning("알림", "변경 내용을 입력해주세요.", parent=dialog)
+                return
+            dialog.destroy()
+            self._append_log(f"push 중: {repo} {ver} ...")
+            threading.Thread(
+                target=self._do_versioned_push,
+                args=(path, repo, ver, tag_type, desc),
+                daemon=True,
+            ).start()
+
+        ctk.CTkButton(dialog, text="Push & 태그 생성",
+                      font=ctk.CTkFont(size=13, weight="bold"),
+                      fg_color=COLOR_ACCENT, hover_color="#3a7ae4",
+                      height=38, corner_radius=8, command=do_push).pack(fill="x", padx=24)
+
+    def _do_versioned_push(self, path: str, repo: str, version: str, tag_type: str, desc: str):
+        try:
+            update_project(path, repo, commit_message=f"{tag_type} {version}: {desc}", push=True)
+            url = create_release_tag(path, repo, version, tag_type, desc)
+            self._log_queue.put(f"push 완료: {repo} {version}")
+            if url:
+                self._log_queue.put(f"Release: {url}")
+        except Exception as e:
+            self._log_queue.put(f"push 실패: {e}")
 
     def _do_manual_push(self, path: str, repo: str):
         try:
