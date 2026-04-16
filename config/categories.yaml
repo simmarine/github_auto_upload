@@ -1,0 +1,9 @@
+# 로컬 카테고리명 → Tistory 카테고리 ID 매핑
+# Tistory 카테고리 ID는 `python main.py categories` 명령으로 조회
+categories:
+  python: ""
+  data-analysis: ""
+  machine-learning: ""
+  web: ""
+  algorithm: ""
+  til: ""

@@ -1,0 +1,60 @@
+{
+  "defaultMode": "plan",
+
+  "permissions": {
+    "allow": [
+      "Bash(python *)",
+      "Bash(pytest *)",
+      "Bash(pip *)",
+      "Bash(black *)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git push *)",
+      "Bash(git status)",
+      "Bash(git log *)",
+      "Edit(src/**)",
+      "Edit(tests/**)",
+      "Edit(config/**)",
+      "Edit(templates/**)",
+      "Edit(main.py)",
+      "Edit(requirements.txt)"
+    ],
+    "deny": [
+      "Edit(.env)",
+      "Bash(rm -rf *)",
+      "Bash(git push --force *)"
+    ]
+  },
+
+  "mcpServers": {
+    "github": {
+      "transport": "http",
+      "url": "https://api.githubcopilot.com/mcp/"
+    }
+  },
+
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python -m black --quiet $(jq -r '.tool_input.file_path') 2>/dev/null || true"
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell.exe -Command \"[System.Reflection.Assembly]::LoadWithPartialName('System.Windows.Forms'); [System.Windows.Forms.MessageBox]::Show('Claude 작업 완료!', 'Claude Code')\""
+          }
+        ]
+      }
+    ]
+  }
+}
